@@ -74,7 +74,7 @@ body {
 /* Header - Visible with theme toggle */
 header {
     padding: 1rem 2rem;
-    background: var(--surface);
+    background: #22c55e;
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
 }
