@@ -1,170 +1,177 @@
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from ai_generator import AIGenerator
-from document_processor import DocumentProcessor
-from models import Course, CourseChunk, Lesson
-from search_tools import CourseOutlineTool, CourseSearchTool, ToolManager
-from session_manager import SessionManager
-from vector_store import VectorStore
+from config import config
+from document_processor import MDProcessor
+from models import Document, DocumentChunk
+from vector_store import SearchResults, VectorStore
 
 
 class RAGSystem:
-    """Main orchestrator for the Retrieval-Augmented Generation system"""
+    """General-purpose Markdown RAG system"""
 
-    def __init__(self, config):
-        self.config = config
-
-        # Initialize core components
-        self.document_processor = DocumentProcessor(
-            config.CHUNK_SIZE, config.CHUNK_OVERLAP
-        )
-        self.vector_store = VectorStore(
-            config.CHROMA_PATH, config.EMBEDDING_MODEL, config.MAX_RESULTS
-        )
-        self.ai_generator = AIGenerator(
-            config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL
-        )
-        self.session_manager = SessionManager(config.MAX_HISTORY)
-
-        # Initialize search tools
-        self.tool_manager = ToolManager()
-        self.search_tool = CourseSearchTool(self.vector_store)
-        self.outline_tool = CourseOutlineTool(self.vector_store)
-        self.tool_manager.register_tool(self.search_tool)
-        self.tool_manager.register_tool(self.outline_tool)
-
-    def add_course_document(self, file_path: str) -> Tuple[Course, int]:
+    def __init__(self, folder_path: str, chroma_path: str = "./chroma_db"):
         """
-        Add a single course document to the knowledge base.
+        Initialize RAG system and load MD files.
 
         Args:
-            file_path: Path to the course document
+            folder_path: Directory containing MD files
+            chroma_path: ChromaDB storage path
+        """
+        self.folder_path = folder_path
+
+        # Initialize core components
+        self.md_processor = MDProcessor(config.CHUNK_SIZE, config.CHUNK_OVERLAP)
+        self.vector_store = VectorStore(
+            chroma_path, config.EMBEDDING_MODEL, config.MAX_RESULTS
+        )
+
+        # Auto-load MD files
+        self.load_md_folder(folder_path, clear_existing=False)
+
+    def query(self, query_text: str, limit: int = 5) -> Dict[str, Any]:
+        """
+        Query MD document content.
+
+        Args:
+            query_text: Query text
+            limit: Number of results to return
 
         Returns:
-            Tuple of (Course object, number of chunks created)
+            {
+                "answer": str,              # Formatted query result
+                "sources": List[str],       # Source information list
+                "results": List[Dict]       # Raw search results
+            }
         """
-        try:
-            # Process the document
-            course, course_chunks = self.document_processor.process_course_document(
-                file_path
+        # Execute vector search
+        search_results = self.vector_store.search(query_text, limit=limit)
+
+        if search_results.error:
+            return {
+                "answer": f"搜索错误: {search_results.error}",
+                "sources": [],
+                "results": [],
+            }
+
+        if search_results.is_empty():
+            return {
+                "answer": "未找到相关内容",
+                "sources": [],
+                "results": [],
+            }
+
+        # Format results
+        answer = self._format_results(search_results)
+        sources = self._extract_sources(search_results)
+
+        # Include raw results
+        results = [
+            {
+                "content": doc,
+                "metadata": meta,
+                "distance": dist,
+            }
+            for doc, meta, dist in zip(
+                search_results.documents,
+                search_results.metadata,
+                search_results.distances,
             )
+        ]
 
-            # Add course metadata to vector store for semantic search
-            self.vector_store.add_course_metadata(course)
+        return {
+            "answer": answer,
+            "sources": sources,
+            "results": results,
+        }
 
-            # Add course content chunks to vector store
-            self.vector_store.add_course_content(course_chunks)
-
-            return course, len(course_chunks)
-        except Exception as e:
-            print(f"Error processing course document {file_path}: {e}")
-            return None, 0
-
-    def add_course_folder(
+    def load_md_folder(
         self, folder_path: str, clear_existing: bool = False
     ) -> Tuple[int, int]:
         """
-        Add all course documents from a folder.
+        Load all MD files from a folder.
 
         Args:
-            folder_path: Path to folder containing course documents
-            clear_existing: Whether to clear existing data first
+            folder_path: Folder path
+            clear_existing: Whether to clear existing data
 
         Returns:
-            Tuple of (total courses added, total chunks created)
+            (number of documents, number of chunks)
         """
-        total_courses = 0
+        total_docs = 0
         total_chunks = 0
 
-        # Clear existing data if requested
         if clear_existing:
-            print("Clearing existing data for fresh rebuild...")
+            print("清除现有数据...")
             self.vector_store.clear_all_data()
 
         if not os.path.exists(folder_path):
-            print(f"Folder {folder_path} does not exist")
+            print(f"文件夹不存在: {folder_path}")
             return 0, 0
 
-        # Get existing course titles to avoid re-processing
-        existing_course_titles = set(self.vector_store.get_existing_course_titles())
+        # Get already processed file names
+        existing_files = set(self.vector_store.get_existing_filenames())
 
-        # Process each file in the folder
+        # Iterate through MD files
         for file_name in os.listdir(folder_path):
+            if not file_name.lower().endswith(".md"):
+                continue
+
             file_path = os.path.join(folder_path, file_name)
-            if os.path.isfile(file_path) and file_name.lower().endswith(
-                (".pdf", ".docx", ".txt")
-            ):
-                try:
-                    # Check if this course might already exist
-                    # We'll process the document to get the course ID, but only add if new
-                    course, course_chunks = (
-                        self.document_processor.process_course_document(file_path)
-                    )
 
-                    if course and course.title not in existing_course_titles:
-                        # This is a new course - add it to the vector store
-                        self.vector_store.add_course_metadata(course)
-                        self.vector_store.add_course_content(course_chunks)
-                        total_courses += 1
-                        total_chunks += len(course_chunks)
-                        print(
-                            f"Added new course: {course.title} ({len(course_chunks)} chunks)"
-                        )
-                        existing_course_titles.add(course.title)
-                    elif course:
-                        print(f"Course already exists: {course.title} - skipping")
-                except Exception as e:
-                    print(f"Error processing {file_name}: {e}")
+            # Skip already processed files
+            if file_name in existing_files:
+                print(f"文件已存在，跳过: {file_name}")
+                continue
 
-        return total_courses, total_chunks
+            try:
+                # Process MD file
+                document, chunks = self.md_processor.process_md_file(file_path)
 
-    def query(
-        self, query: str, session_id: Optional[str] = None
-    ) -> Tuple[str, List[str], List[str]]:
-        """
-        Process a user query using the RAG system with tool-based search.
+                # Add to vector store
+                self.vector_store.add_document_content(chunks)
 
-        Args:
-            query: User's question
-            session_id: Optional session ID for conversation context
+                total_docs += 1
+                total_chunks += len(chunks)
+                print(f"已加载: {file_name} ({len(chunks)} 个分块)")
 
-        Returns:
-            Tuple of (response, sources list, source_links list)
-        """
-        # Create prompt for the AI with clear instructions
-        prompt = f"""Answer this question about course materials: {query}"""
+            except Exception as e:
+                print(f"处理文件失败 {file_name}: {e}")
 
-        # Get conversation history if session exists
-        history = None
-        if session_id:
-            history = self.session_manager.get_conversation_history(session_id)
+        return total_docs, total_chunks
 
-        # Generate response using AI with tools
-        response = self.ai_generator.generate_response(
-            query=prompt,
-            conversation_history=history,
-            tools=self.tool_manager.get_tool_definitions(),
-            tool_manager=self.tool_manager,
-        )
-
-        # Get sources and source links from the search tool
-        sources = self.tool_manager.get_last_sources()
-        source_links = self.tool_manager.get_last_source_links()
-
-        # Reset sources after retrieving them
-        self.tool_manager.reset_sources()
-
-        # Update conversation history
-        if session_id:
-            self.session_manager.add_exchange(session_id, query, response)
-
-        # Return response with sources and links from tool searches
-        return response, sources, source_links
-
-    def get_course_analytics(self) -> Dict:
-        """Get analytics about the course catalog"""
+    def get_document_stats(self) -> Dict[str, Any]:
+        """Get document statistics."""
         return {
-            "total_courses": self.vector_store.get_course_count(),
-            "course_titles": self.vector_store.get_existing_course_titles(),
+            "total_documents": self.vector_store.get_document_count(),
+            "file_names": self.vector_store.get_existing_filenames(),
         }
+
+    def _format_results(self, results: SearchResults) -> str:
+        """Format search results into readable text."""
+        formatted = []
+        for doc, meta in zip(results.documents, results.metadata):
+            file_name = meta.get("file_name", "unknown")
+            section = meta.get("section_title")
+
+            header = f"## 来源: {file_name}"
+            if section:
+                header += f" > {section}"
+
+            formatted.append(f"{header}\n\n{doc}")
+
+        return "\n\n---\n\n".join(formatted)
+
+    def _extract_sources(self, results: SearchResults) -> List[str]:
+        """Extract source information."""
+        sources = []
+        for meta in results.metadata:
+            file_name = meta.get("file_name", "unknown")
+            section = meta.get("section_title")
+
+            source = file_name
+            if section:
+                source += f" > {section}"
+            sources.append(source)
+
+        return sources

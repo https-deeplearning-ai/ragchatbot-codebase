@@ -1,20 +1,21 @@
+import os
 import warnings
+from pathlib import Path
+from typing import List, Optional
 
 warnings.filterwarnings("ignore", message="resource_tracker: There appear to be.*")
-
-import os
-from typing import List, Optional
 
 from config import config
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from rag_system import RAGSystem
 
 # Initialize FastAPI app
-app = FastAPI(title="Course Materials RAG System", root_path="")
+app = FastAPI(title="Markdown RAG System", root_path="")
 
 # Add trusted host middleware for proxy
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
@@ -29,38 +30,27 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Initialize RAG system
-rag_system = RAGSystem(config)
-
 
 # Pydantic models for request/response
 class QueryRequest(BaseModel):
-    """Request model for course queries"""
+    """Request model for queries"""
 
     query: str
-    session_id: Optional[str] = None
+    limit: Optional[int] = 5
 
 
 class QueryResponse(BaseModel):
-    """Response model for course queries"""
+    """Response model for queries"""
 
     answer: str
     sources: List[str]
-    source_links: List[Optional[str]]
-    session_id: str
 
 
-class CourseStats(BaseModel):
-    """Response model for course statistics"""
+class DocumentStats(BaseModel):
+    """Response model for document statistics"""
 
-    total_courses: int
-    course_titles: List[str]
-
-
-class ClearSessionRequest(BaseModel):
-    """Request model for clearing a session"""
-
-    session_id: str
+    total_documents: int
+    file_names: List[str]
 
 
 # API Endpoints
@@ -70,43 +60,23 @@ class ClearSessionRequest(BaseModel):
 async def query_documents(request: QueryRequest):
     """Process a query and return response with sources"""
     try:
-        # Create session if not provided
-        session_id = request.session_id
-        if not session_id:
-            session_id = rag_system.session_manager.create_session()
-
         # Process query using RAG system
-        answer, sources, source_links = rag_system.query(request.query, session_id)
+        result = rag_system.query(request.query, request.limit or 5)
 
-        return QueryResponse(
-            answer=answer,
-            sources=sources,
-            source_links=source_links,
-            session_id=session_id,
-        )
+        return QueryResponse(answer=result["answer"], sources=result["sources"])
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/courses", response_model=CourseStats)
-async def get_course_stats():
-    """Get course analytics and statistics"""
+@app.get("/api/documents", response_model=DocumentStats)
+async def get_document_stats():
+    """Get document analytics and statistics"""
     try:
-        analytics = rag_system.get_course_analytics()
-        return CourseStats(
-            total_courses=analytics["total_courses"],
-            course_titles=analytics["course_titles"],
+        stats = rag_system.get_document_stats()
+        return DocumentStats(
+            total_documents=stats["total_documents"],
+            file_names=stats["file_names"],
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/clear-session")
-async def clear_session(request: ClearSessionRequest):
-    """Clear a conversation session"""
-    try:
-        rag_system.session_manager.clear_session(request.session_id)
-        return {"status": "success", "message": "Session cleared successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -114,25 +84,38 @@ async def clear_session(request: ClearSessionRequest):
 @app.on_event("startup")
 async def startup_event():
     """Load initial documents on startup"""
+    # Initialize RAG system with docs folder
     docs_path = "../docs"
+    rag = None
+
     if os.path.exists(docs_path):
         print("Loading initial documents...")
         try:
-            courses, chunks = rag_system.add_course_folder(
-                docs_path, clear_existing=False
-            )
-            print(f"Loaded {courses} courses with {chunks} chunks")
+            # Initialize and load documents
+            rag = RAGSystem(docs_path, chroma_path=config.CHROMA_PATH)
+            print(f"RAG system initialized with documents from: {docs_path}")
+
+            # Store globally for use in endpoints
+            globals()["rag_system"] = rag
         except Exception as e:
             print(f"Error loading documents: {e}")
+            # Initialize empty system
+            rag = RAGSystem.__new__(RAGSystem)
+            rag.md_processor = None
+            rag.vector_store = None
+            rag.folder_path = docs_path
+            globals()["rag_system"] = rag
+    else:
+        print(f"Docs folder not found: {docs_path}")
+        # Initialize empty system
+        rag = RAGSystem.__new__(RAGSystem)
+        rag.md_processor = None
+        rag.vector_store = None
+        rag.folder_path = docs_path
+        globals()["rag_system"] = rag
 
-
-import os
-from pathlib import Path
-
-from fastapi.responses import FileResponse
 
 # Custom static file handler with no-cache headers for development
-from fastapi.staticfiles import StaticFiles
 
 
 class DevStaticFiles(StaticFiles):
@@ -147,4 +130,4 @@ class DevStaticFiles(StaticFiles):
 
 
 # Serve static files for the frontend
-app.mount("/", StaticFiles(directory="../frontend", html=True), name="static")
+app.mount("/", DevStaticFiles(directory="../frontend", html=True), name="static")
