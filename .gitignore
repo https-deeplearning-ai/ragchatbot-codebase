@@ -19,6 +19,7 @@ backend/chroma_db/
 
 # Uploads
 uploads/
+backend/data/
 
 # IDE
 .vscode/

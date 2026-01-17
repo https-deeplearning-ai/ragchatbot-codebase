@@ -70,6 +70,7 @@ dependencies = [
     { name = "chromadb" },
     { name = "load-dotenv" },
     { name = "pydantic" },
+    { name = "pytest" },
     { name = "sentence-transformers" },
 ]
 
@@ -78,6 +79,7 @@ requires-dist = [
     { name = "chromadb", specifier = ">=1.0.15" },
     { name = "load-dotenv", specifier = ">=0.1.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pytest", specifier = ">=8.4.1" },
     { name = "sentence-transformers", specifier = ">=5.0.0" },
 ]
 
