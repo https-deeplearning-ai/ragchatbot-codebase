@@ -1,0 +1,12 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "chromadb>=1.0.15",
+    "load-dotenv>=0.1.0",
+    "pydantic>=2.11.7",
+    "sentence-transformers>=5.0.0",
+]
