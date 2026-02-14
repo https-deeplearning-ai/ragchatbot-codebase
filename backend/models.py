@@ -1,29 +1,22 @@
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
 
-class Lesson(BaseModel):
-    """Represents a lesson within a course"""
+class Document(BaseModel):
+    """Represents a Markdown document"""
 
-    lesson_number: int  # Sequential lesson number (1, 2, 3, etc.)
-    title: str  # Lesson title
-    lesson_link: Optional[str] = None  # URL link to the lesson
-
-
-class Course(BaseModel):
-    """Represents a complete course with its lessons"""
-
-    title: str  # Full course title (used as unique identifier)
-    course_link: Optional[str] = None  # URL link to the course
-    instructor: Optional[str] = None  # Course instructor name (optional metadata)
-    lessons: List[Lesson] = []  # List of lessons in this course
+    file_name: str  # File name (e.g., "guide.md")
+    file_path: str  # Full path to the file
+    title: Optional[str] = None  # Title extracted from frontmatter or first heading
+    sections: List[str] = []  # List of section titles
 
 
-class CourseChunk(BaseModel):
-    """Represents a text chunk from a course for vector storage"""
+class DocumentChunk(BaseModel):
+    """Represents a text chunk from a Markdown document"""
 
     content: str  # The actual text content
-    course_title: str  # Which course this chunk belongs to
-    lesson_number: Optional[int] = None  # Which lesson this chunk is from
+    file_name: str  # Source file name
+    file_path: str  # Source file path
+    section_title: Optional[str] = None  # Section title this chunk belongs to
     chunk_index: int  # Position of this chunk in the document

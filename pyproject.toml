@@ -3,7 +3,7 @@ name = "starting-codebase"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "chromadb==1.0.15",
     "anthropic==0.58.2",
@@ -87,3 +87,8 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 exclude = ["build", "dist", ".venv"]
+
+[tool.uv.workspace]
+members = [
+    "backend",
+]
